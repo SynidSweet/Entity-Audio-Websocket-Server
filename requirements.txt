@@ -2,4 +2,4 @@ asyncio
 datetime
 wave
 websockets
-audioop
+boto3

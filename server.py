@@ -4,6 +4,8 @@ import wave
 import websockets
 import audioop
 import os
+import boto3
+
 
 # WebSocket server address and port
 SERVER_ADDRESS = "0.0.0.0"
@@ -24,6 +26,9 @@ file_counter = 0
 
 # Dictionary to keep track of active clients
 clients = {}
+
+s3_client = boto3.client('s3')
+bucket_name = 'entity-installation-audio-storage'
 
 def trim_silence(audio_buffer, sample_width, threshold):
     """Remove silence from the beginning and end of the audio buffer."""
@@ -59,22 +64,35 @@ async def save_audio(audio_buffer, client_id):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         file_counter += 1
         audio_filename = f"audio_{client_id}_{timestamp}_{file_counter}.wav"
+        
+        # Save to a temporary file first
         audio_filepath = os.path.join(audio_file_folder, audio_filename)
         with wave.open(audio_filepath, 'wb') as wf:
             wf.setnchannels(1)  # Mono
             wf.setsampwidth(2)  # Sample width in bytes
             wf.setframerate(44100)  # Frame rate
             wf.writeframes(audio_buffer)
-        print(f"Audio saved to file: {audio_filepath}")
-        return audio_filepath
+        
+        # Upload to S3
+        s3_client.upload_file(audio_filepath, bucket_name, audio_filename)
+        os.remove(audio_filepath)  # Remove local file after upload
+
+        return audio_filename
     return None
 
-async def stream_saved_audio(websocket, audio_filepath):
+
+async def stream_saved_audio(websocket, audio_filename):
+    audio_filepath = os.path.join(audio_file_folder, audio_filename)
+
+    # Download from S3
+    s3_client.download_file(bucket_name, audio_filename, audio_filepath)
+    
     with open(audio_filepath, 'rb') as f:
         data = f.read()
         await websocket.send(data)
-    os.remove(audio_filepath)
-    print(f"Audio file sent to client and deleted: {audio_filepath}")
+    os.remove(audio_filepath)  # Remove local file after sending
+    print(f"Audio file sent to client and deleted locally: {audio_filepath}")
+
 
 async def handle_client(websocket, path):
     client_id = id(websocket)
@@ -101,8 +119,6 @@ async def handle_client(websocket, path):
 
                     if recording_start < silence_start - datetime.timedelta(milliseconds=10):
                         audio_filepath = await save_audio(bytes(audio_buffer), client_id)
-                        if audio_filepath:
-                            await stream_saved_audio(websocket, audio_filepath)
 
                     audio_buffer = bytearray()
                     silence_start = None
