@@ -14,9 +14,21 @@ class AudioProcessor:
         self.bucket_name = bucket_name
         self.s3_client = boto3.client('s3')
         self.file_counter = 0
+        self.last_non_silent_time = datetime.datetime.now()
 
         if not os.path.exists(self.audio_file_folder):
             os.makedirs(self.audio_file_folder)
+
+    def process_audio(self, audio_chunk):
+        rms = audioop.rms(audio_chunk, 2)
+        if rms >= Config.SILENCE_THRESHOLD:
+            self.last_non_silent_time = datetime.datetime.now()
+            return False  # Not silent
+        return True  # Silent
+
+    def is_inactive(self):
+        time_since_last_non_silent = (datetime.datetime.now() - self.last_non_silent_time).total_seconds()
+        return time_since_last_non_silent > Config.INACTIVITY_TIMEOUT
 
     def trim_silence(self, audio_buffer, sample_width, threshold):
         start_index = 0
@@ -57,7 +69,16 @@ class AudioProcessor:
             wf.setframerate(44100)  # Frame rate
             wf.writeframes(audio_buffer)
         
-        self.s3_client.upload_file(audio_filepath, self.bucket_name, audio_filename)
+        metadata = {
+            'client_id': str(client_id),
+            'timestamp': timestamp
+        }
+        self.s3_client.upload_file(
+            audio_filepath, 
+            self.bucket_name, 
+            audio_filename,
+            ExtraArgs={'Metadata': metadata}
+        )
         os.remove(audio_filepath)  # Remove local file after upload
 
         return audio_filename

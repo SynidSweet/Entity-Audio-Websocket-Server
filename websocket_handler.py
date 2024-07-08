@@ -1,61 +1,94 @@
-import asyncio
-import websockets
+import json
+import boto3
 import time
 import logging
+from botocore.exceptions import ClientError
+import websockets
 from config import Config
-from ecs import start_ecs_task, stop_ecs_task
 
 logger = logging.getLogger(__name__)
+
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('UserSessionMapping')
 
 class WebSocketHandler:
     def __init__(self, websocket, client_id, audio_processor):
         self.websocket = websocket
         self.client_id = client_id
         self.audio_processor = audio_processor
-        self.task_arn = None
-        self.last_activity = asyncio.get_event_loop().time()
         self.audio_buffer = bytearray()
-        self.silence_start = None
-        self.recording_start = time.time()
+
+    async def handle_connect(self):
+        logger.info(f"New client connected: {self.client_id}")
+        try:
+            table.put_item(
+                Item={
+                    'user_id': self.client_id,
+                    'connection_id': str(id(self.websocket)),
+                    'last_active': int(time.time())
+                }
+            )
+        except ClientError as e:
+            logger.error(f"Error updating DynamoDB on connect: {e}")
+
+    async def handle_disconnect(self):
+        logger.info(f"Client disconnected: {self.client_id}")
+        try:
+            table.delete_item(Key={'user_id': self.client_id})
+        except ClientError as e:
+            logger.error(f"Error updating DynamoDB on disconnect: {e}")
 
     async def handle(self):
-        self.task_arn = start_ecs_task(self.client_id)
         try:
-            while True:
-                try:
-                    message = await asyncio.wait_for(self.websocket.recv(), timeout=1)
-                    self.last_activity = asyncio.get_event_loop().time()
-                    await self.process_audio(message)
-                except asyncio.TimeoutError:
-                    if asyncio.get_event_loop().time() - self.last_activity > Config.INACTIVITY_TIMEOUT:
-                        logger.info(f"Closing connection due to inactivity: {self.client_id}")
-                        await self.websocket.close()
-                        break
-        except websockets.ConnectionClosed:
-            logger.info(f"Connection closed: {self.client_id}")
-        finally:
-            await self.cleanup()
+            async for message in self.websocket:
+                await self.process_message(message)
+        except websockets.exceptions.ConnectionClosed:
+            logger.info(f"Connection closed for client: {self.client_id}")
 
-    async def process_audio(self, message):
-        self.audio_buffer.extend(message)
-        rms = audioop.rms(message, 2)
+    async def process_message(self, message):
+        try:
+            data = json.loads(message)
+            if data['type'] == 'audio':
+                await self.handle_audio(data['audio'])
+            elif data['type'] == 'command':
+                await self.handle_command(data['command'])
+            else:
+                logger.warning(f"Unknown message type: {data['type']}")
+        except json.JSONDecodeError:
+            logger.error("Received invalid JSON")
 
-        if rms < Config.SILENCE_THRESHOLD:
-            if self.silence_start is None:
-                self.silence_start = time.time()
-            elif time.time() - self.silence_start >= Config.SILENCE_DURATION / 1000:
-                if self.recording_start < self.silence_start - 0.01:
-                    await self.audio_processor.save_audio(bytes(self.audio_buffer), self.client_id)
+    async def handle_audio(self, audio_data):
+        self.audio_buffer.extend(audio_data)
+        is_silent = self.audio_processor.process_audio(audio_data)
+
+        if is_silent and len(self.audio_buffer) > 0:
+            audio_filename = await self.audio_processor.save_audio(bytes(self.audio_buffer), self.client_id)
+            self.audio_buffer = bytearray()
+            logger.info(f"Audio saved: {audio_filename}")
+
+    async def handle_command(self, command):
+        if command == 'start_recording':
+            self.audio_buffer = bytearray()
+            await self.websocket.send(json.dumps({'status': 'recording_started'}))
+        elif command == 'stop_recording':
+            if len(self.audio_buffer) > 0:
+                audio_filename = await self.audio_processor.save_audio(bytes(self.audio_buffer), self.client_id)
                 self.audio_buffer = bytearray()
-                self.silence_start = None
-                self.recording_start = time.time()
+                await self.websocket.send(json.dumps({'status': 'recording_saved', 'filename': audio_filename}))
+            else:
+                await self.websocket.send(json.dumps({'status': 'no_audio_recorded'}))
+        elif command.startswith('play_'):
+            audio_filename = command.split('_', 1)[1]
+            await self.stream_audio(audio_filename)
         else:
-            self.silence_start = None
+            logger.warning(f"Unknown command: {command}")
 
-    async def cleanup(self):
-        logger.info(f"Client disconnected: {self.client_id}")
-        asyncio.create_task(self.delayed_ecs_task_termination())
-
-    async def delayed_ecs_task_termination(self):
-        await asyncio.sleep(Config.ECS_TASK_TERMINATION_DELAY)
-        stop_ecs_task(self.task_arn)
+    async def stream_audio(self, audio_filename):
+        try:
+            audio_data = await self.audio_processor.get_audio(audio_filename)
+            await self.websocket.send(json.dumps({'type': 'audio_stream_start', 'filename': audio_filename}))
+            await self.websocket.send(audio_data)
+            await self.websocket.send(json.dumps({'type': 'audio_stream_end'}))
+        except Exception as e:
+            logger.error(f"Error streaming audio: {e}")
+            await self.websocket.send(json.dumps({'type': 'error', 'message': 'Error streaming audio'}))
