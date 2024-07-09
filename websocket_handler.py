@@ -71,6 +71,9 @@ class WebSocketHandler:
             logger.error("Received message of unknown type")
 
     async def handle_audio(self, audio_data):
+        # Assuming audio_data is bytes
+        self.audio_buffer.extend(audio_data)
+
         is_silent = self.audio_processor.process_audio(audio_data)
         if is_silent and self.chunk_count > 0:
             if len(self.audio_buffer) > 0 and not self.audio_processor.is_buffer_silent(self.audio_buffer):
@@ -80,7 +83,6 @@ class WebSocketHandler:
                 logger.info(f"Audio saved: {audio_filename}")
             return
 
-        self.audio_buffer.extend(audio_data)
         self.chunk_count += 1
 
     async def handle_command(self, command):
