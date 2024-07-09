@@ -47,6 +47,7 @@ class WebSocketHandler:
             logger.error(f"Error updating DynamoDB on disconnect: {e}")
 
     async def handle(self):
+        logger.info(f"Handling client: {self.client_id}")
         try:
             async for message in self.websocket:
                 await self.process_message(message)
