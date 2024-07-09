@@ -18,6 +18,7 @@ class WebSocketHandler:
         self.client_id = client_id
         self.audio_processor = audio_processor
         self.audio_buffer = bytearray()
+        self.chunk_count = 0
 
     async def handle_connect(self):
         logger.info(f"New client connected: {self.client_id}")
@@ -70,25 +71,28 @@ class WebSocketHandler:
             logger.error("Received message of unknown type")
 
     async def handle_audio(self, audio_data):
-
         is_silent = self.audio_processor.process_audio(audio_data)
-        if is_silent:
-            if len(self.audio_buffer) > 0:
+        if is_silent and self.chunk_count > 0:
+            if len(self.audio_buffer) > 0 and not self.audio_processor.is_buffer_silent(self.audio_buffer):
                 audio_filename = await self.audio_processor.save_audio(bytes(self.audio_buffer), self.client_id)
                 self.audio_buffer = bytearray()
+                self.chunk_count = 0
                 logger.info(f"Audio saved: {audio_filename}")
             return
 
         self.audio_buffer.extend(audio_data)
+        self.chunk_count += 1
 
     async def handle_command(self, command):
         if command == 'start_recording':
             self.audio_buffer = bytearray()
+            self.chunk_count = 0
             await self.websocket.send(json.dumps({'status': 'recording_started'}))
         elif command == 'stop_recording':
-            if len(self.audio_buffer) > 0:
+            if len(self.audio_buffer) > 0 and self.chunk_count > 1 and not self.audio_processor.is_buffer_silent(self.audio_buffer):
                 audio_filename = await self.audio_processor.save_audio(bytes(self.audio_buffer), self.client_id)
                 self.audio_buffer = bytearray()
+                self.chunk_count = 0
                 await self.websocket.send(json.dumps({'status': 'recording_saved', 'filename': audio_filename}))
             else:
                 await self.websocket.send(json.dumps({'status': 'no_audio_recorded'}))

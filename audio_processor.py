@@ -41,6 +41,10 @@ class AudioProcessor:
         logger.debug(f"Time since last non-silent: {time_since_last_non_silent}, Timeout: {Config.INACTIVITY_TIMEOUT}")
         return time_since_last_non_silent > Config.INACTIVITY_TIMEOUT
 
+    def is_buffer_silent(self, audio_buffer):
+        rms = audioop.rms(audio_buffer, 2)
+        return rms < Config.SILENCE_THRESHOLD
+
     def trim_silence(self, audio_buffer, sample_width, threshold):
         start_index = 0
         end_index = len(audio_buffer)
