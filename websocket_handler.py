@@ -82,6 +82,9 @@ class WebSocketHandler:
                 self.audio_buffer = bytearray()
                 self.chunk_count = 0
                 logger.info(f"Audio saved: {audio_filename}")
+            else:
+                self.audio_buffer = bytearray()
+                self.chunk_count = 0
 
     async def handle_command(self, command):
         if command == 'start_recording':
