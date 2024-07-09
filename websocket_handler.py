@@ -36,6 +36,10 @@ class WebSocketHandler:
     async def handle_disconnect(self):
         logger.info(f"Client disconnected: {self.client_id}")
         try:
+            if len(self.audio_buffer) > 0:
+                logger.debug("Saving audio buffer on disconnect.")
+                audio_filename = await self.audio_processor.save_audio(bytes(self.audio_buffer), self.client_id)
+                logger.info(f"Audio saved on disconnect: {audio_filename}")
             table.delete_item(Key={'user_id': self.client_id})
         except ClientError as e:
             logger.error(f"Error updating DynamoDB on disconnect: {e}")
@@ -82,7 +86,6 @@ class WebSocketHandler:
                 self.audio_buffer = bytearray()
                 self.chunk_count = 0
                 logger.info(f"Audio saved: {audio_filename}")
-            return
 
     async def handle_command(self, command):
         if command == 'start_recording':
