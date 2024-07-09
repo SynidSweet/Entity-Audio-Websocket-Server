@@ -8,7 +8,7 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
-dynamodb = boto3.resource('dynamodb')
+dynamodb = boto3.resource('dynamodb', region_name='eu-north-1')
 table = dynamodb.Table('UserSessionMapping')
 
 class WebSocketHandler:
