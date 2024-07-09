@@ -36,9 +36,11 @@ class AudioProcessor:
             logger.debug(f"Elapsed silence time: {elapsed_silence_time} ms, Silence duration: {Config.SILENCE_DURATION} ms")
             if elapsed_silence_time >= Config.SILENCE_DURATION:
                 logger.debug("Detected silence.")
-                self.silence_start_time = None
                 return True  # Silent
             return False  # Not silent yet
+
+    def reset_silence_timer(self):
+        self.silence_start_time = None
 
     def is_inactive(self):
         time_since_last_non_silent = (datetime.datetime.now() - self.last_non_silent_time).total_seconds()
