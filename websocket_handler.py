@@ -71,6 +71,7 @@ class WebSocketHandler:
             logger.error("Received message of unknown type")
 
     async def handle_audio(self, audio_data):
+        logger.debug("Received audio data.")
         self.audio_buffer.extend(audio_data)
         self.chunk_count += 1
 
