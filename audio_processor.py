@@ -21,6 +21,7 @@ class AudioProcessor:
 
     def process_audio(self, audio_chunk):
         rms = audioop.rms(audio_chunk, 2)
+        logger.debug(f"RMS: {rms}, Threshold: {Config.SILENCE_THRESHOLD}")
         if rms >= Config.SILENCE_THRESHOLD:
             self.last_non_silent_time = datetime.datetime.now()
             return False  # Not silent
@@ -28,6 +29,7 @@ class AudioProcessor:
 
     def is_inactive(self):
         time_since_last_non_silent = (datetime.datetime.now() - self.last_non_silent_time).total_seconds()
+        logger.debug(f"Time since last non-silent: {time_since_last_non_silent}, Timeout: {Config.INACTIVITY_TIMEOUT}")
         return time_since_last_non_silent > Config.INACTIVITY_TIMEOUT
 
     def trim_silence(self, audio_buffer, sample_width, threshold):

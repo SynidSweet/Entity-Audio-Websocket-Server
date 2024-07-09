@@ -72,7 +72,7 @@ class WebSocketHandler:
         self.audio_buffer.extend(audio_data)
         is_silent = self.audio_processor.process_audio(audio_data)
 
-        if is_silent and len(self.audio_buffer) > 0:
+        if self.audio_processor.is_inactive() and len(self.audio_buffer) > 0:
             audio_filename = await self.audio_processor.save_audio(bytes(self.audio_buffer), self.client_id)
             self.audio_buffer = bytearray()
             logger.info(f"Audio saved: {audio_filename}")
