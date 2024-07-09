@@ -9,7 +9,7 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 dynamodb = boto3.resource('dynamodb', region_name='eu-north-1')
-table = dynamodb.Table('UserSessionMapping')
+table = dynamodb.Table('entity-user-session-table')
 
 class WebSocketHandler:
     def __init__(self, websocket, client_id, audio_processor):
