@@ -55,9 +55,9 @@ class WebSocketHandler:
             logger.info(f"Connection closed for client: {self.client_id}")
 
     async def process_message(self, message):
-        logger.info(f"Received message: {message}")
+        logger.info(f"Received message of type: {type(message)}")
         if isinstance(message, bytes):
-            # Treat the message as audio data
+            logger.info(f"Received audio data of length: {len(message)}")
             await self.handle_audio(message)
         elif isinstance(message, str):
             # Treat the message as a JSON string
