@@ -15,6 +15,7 @@ class AudioProcessor:
         self.s3_client = boto3.client('s3')
         self.file_counter = 0
         self.last_non_silent_time = datetime.datetime.now()
+        self.silence_start_time = None
 
         if not os.path.exists(self.audio_file_folder):
             os.makedirs(self.audio_file_folder)
@@ -22,10 +23,18 @@ class AudioProcessor:
     def process_audio(self, audio_chunk):
         rms = audioop.rms(audio_chunk, 2)
         logger.debug(f"RMS: {rms}, Threshold: {Config.SILENCE_THRESHOLD}")
+        
         if rms >= Config.SILENCE_THRESHOLD:
             self.last_non_silent_time = datetime.datetime.now()
+            self.silence_start_time = None
             return False  # Not silent
-        return True  # Silent
+        else:
+            if self.silence_start_time is None:
+                self.silence_start_time = datetime.datetime.now()
+            elapsed_silence_time = (datetime.datetime.now() - self.silence_start_time).total_seconds() * 1000
+            if elapsed_silence_time >= Config.SILENCE_DURATION:
+                return True  # Silent
+            return False  # Not silent yet
 
     def is_inactive(self):
         time_since_last_non_silent = (datetime.datetime.now() - self.last_non_silent_time).total_seconds()

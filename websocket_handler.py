@@ -4,6 +4,7 @@ import time
 import logging
 from botocore.exceptions import ClientError
 import websockets
+from audio_processor import AudioProcessor
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -12,7 +13,7 @@ dynamodb = boto3.resource('dynamodb', region_name='eu-north-1')
 table = dynamodb.Table('entity-user-session-table')
 
 class WebSocketHandler:
-    def __init__(self, websocket, client_id, audio_processor):
+    def __init__(self, websocket, client_id, audio_processor: AudioProcessor):
         self.websocket = websocket
         self.client_id = client_id
         self.audio_processor = audio_processor
@@ -69,13 +70,16 @@ class WebSocketHandler:
             logger.error("Received message of unknown type")
 
     async def handle_audio(self, audio_data):
-        self.audio_buffer.extend(audio_data)
-        is_silent = self.audio_processor.process_audio(audio_data)
 
-        if self.audio_processor.is_inactive() and len(self.audio_buffer) > 0:
-            audio_filename = await self.audio_processor.save_audio(bytes(self.audio_buffer), self.client_id)
-            self.audio_buffer = bytearray()
-            logger.info(f"Audio saved: {audio_filename}")
+        is_silent = self.audio_processor.process_audio(audio_data)
+        if is_silent:
+            if len(self.audio_buffer) > 0:
+                audio_filename = await self.audio_processor.save_audio(bytes(self.audio_buffer), self.client_id)
+                self.audio_buffer = bytearray()
+                logger.info(f"Audio saved: {audio_filename}")
+            return
+
+        self.audio_buffer.extend(audio_data)
 
     async def handle_command(self, command):
         if command == 'start_recording':
