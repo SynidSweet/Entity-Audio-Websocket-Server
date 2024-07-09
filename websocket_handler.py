@@ -81,7 +81,6 @@ class WebSocketHandler:
                 audio_filename = await self.audio_processor.save_audio(bytes(self.audio_buffer), self.client_id)
                 self.audio_buffer = bytearray()
                 self.chunk_count = 0
-                self.audio_processor.reset_silence_timer()
                 logger.info(f"Audio saved: {audio_filename}")
 
     async def handle_command(self, command):
