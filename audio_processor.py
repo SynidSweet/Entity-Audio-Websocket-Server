@@ -75,12 +75,12 @@ class AudioProcessor:
 
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.file_counter += 1
-        audio_filename = f"incoming_audio_{client_id}_{timestamp}_{self.file_counter}.wav"
+        audio_filename = f"audio_{client_id}_{timestamp}_{self.file_counter}.wav"
         
         audio_filepath = os.path.join(self.audio_file_folder, audio_filename)
         with wave.open(audio_filepath, 'wb') as wf:
             wf.setnchannels(1)  # Mono
-            wf.setsampwidth(2)  # Sample width in bytes
+            wf.setsampwidth(2)  # Sample width in bytes (16 bits = 2 bytes)
             wf.setframerate(44100)  # Frame rate set to 44100 Hz
             wf.writeframes(audio_buffer)
         
