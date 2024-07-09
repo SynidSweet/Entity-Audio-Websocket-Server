@@ -1,113 +1,118 @@
-import json
+import os
+import wave
 import boto3
-import time
+import audioop
+import datetime
 import logging
-from botocore.exceptions import ClientError
-import websockets
-from audio_processor import AudioProcessor
 from config import Config
 
 logger = logging.getLogger(__name__)
 
-dynamodb = boto3.resource('dynamodb', region_name='eu-north-1')
-table = dynamodb.Table('entity-user-session-table')
+class AudioProcessor:
+    def __init__(self, audio_file_folder, bucket_name):
+        self.audio_file_folder = audio_file_folder
+        self.bucket_name = bucket_name
+        self.s3_client = boto3.client('s3')
+        self.file_counter = 0
+        self.last_non_silent_time = datetime.datetime.now()
+        self.silence_start_time = None
 
-class WebSocketHandler:
-    def __init__(self, websocket, client_id, audio_processor: AudioProcessor):
-        self.websocket = websocket
-        self.client_id = client_id
-        self.audio_processor = audio_processor
-        self.audio_buffer = bytearray()
-        self.chunk_count = 0
+        if not os.path.exists(self.audio_file_folder):
+            os.makedirs(self.audio_file_folder)
 
-    async def handle_connect(self):
-        logger.info(f"New client connected: {self.client_id}")
-        try:
-            table.put_item(
-                Item={
-                    'user_id': self.client_id,
-                    'connection_id': str(id(self.websocket)),
-                    'last_active': int(time.time())
-                }
-            )
-        except ClientError as e:
-            logger.error(f"Error updating DynamoDB on connect: {e}")
-
-    async def handle_disconnect(self):
-        logger.info(f"Client disconnected: {self.client_id}")
-        try:
-            table.delete_item(Key={'user_id': self.client_id})
-        except ClientError as e:
-            logger.error(f"Error updating DynamoDB on disconnect: {e}")
-
-    async def handle(self):
-        try:
-            async for message in self.websocket:
-                await self.process_message(message)
-        except websockets.exceptions.ConnectionClosed:
-            logger.info(f"Connection closed for client: {self.client_id}")
-
-    async def process_message(self, message):
-        if isinstance(message, bytes):
-            # Treat the message as audio data
-            await self.handle_audio(message)
-        elif isinstance(message, str):
-            # Treat the message as a JSON string
-            try:
-                data = json.loads(message)
-                if data['type'] == 'audio':
-                    await self.handle_audio(data['audio'])
-                elif data['type'] == 'command':
-                    await self.handle_command(data['command'])
-                else:
-                    logger.warning(f"Unknown message type: {data['type']}")
-            except json.JSONDecodeError:
-                logger.error("Received invalid JSON")
-            except UnicodeDecodeError:
-                logger.error("Received message with invalid UTF-8 encoding")
-            except Exception as e:
-                logger.error(f"Unexpected error: {e}")
+    def process_audio(self, audio_chunk):
+        rms = audioop.rms(audio_chunk, 2)
+        logger.debug(f"Processing audio chunk, RMS: {rms}, Threshold: {Config.SILENCE_THRESHOLD}")
+        
+        if rms >= Config.SILENCE_THRESHOLD:
+            self.last_non_silent_time = datetime.datetime.now()
+            self.silence_start_time = None
+            logger.debug("Audio chunk is not silent.")
+            return False  # Not silent
         else:
-            logger.error("Received message of unknown type")
+            if self.silence_start_time is None:
+                self.silence_start_time = datetime.datetime.now()
+            elapsed_silence_time = (datetime.datetime.now() - self.silence_start_time).total_seconds() * 1000
+            logger.debug(f"Elapsed silence time: {elapsed_silence_time} ms, Silence duration: {Config.SILENCE_DURATION} ms")
+            if elapsed_silence_time >= Config.SILENCE_DURATION:
+                logger.debug("Detected silence.")
+                return True  # Silent
+            return False  # Not silent yet
 
-    async def handle_audio(self, audio_data):
-        self.audio_buffer.extend(audio_data)
-        self.chunk_count += 1
+    def is_inactive(self):
+        time_since_last_non_silent = (datetime.datetime.now() - self.last_non_silent_time).total_seconds()
+        logger.debug(f"Time since last non-silent: {time_since_last_non_silent}, Inactivity timeout: {Config.INACTIVITY_TIMEOUT}")
+        return time_since_last_non_silent > Config.INACTIVITY_TIMEOUT
 
-        is_silent = self.audio_processor.process_audio(audio_data)
-        if is_silent and self.chunk_count > 0:
-            if len(self.audio_buffer) > 0 and not self.audio_processor.is_buffer_silent(self.audio_buffer):
-                audio_filename = await self.audio_processor.save_audio(bytes(self.audio_buffer), self.client_id)
-                self.audio_buffer = bytearray()
-                self.chunk_count = 0
-                logger.info(f"Audio saved: {audio_filename}")
-            return
+    def is_buffer_silent(self, audio_buffer):
+        rms = audioop.rms(audio_buffer, 2)
+        logger.debug(f"Buffer RMS: {rms}, Threshold: {Config.SILENCE_THRESHOLD}")
+        return rms < Config.SILENCE_THRESHOLD
 
-    async def handle_command(self, command):
-        if command == 'start_recording':
-            self.audio_buffer = bytearray()
-            self.chunk_count = 0
-            await self.websocket.send(json.dumps({'status': 'recording_started'}))
-        elif command == 'stop_recording':
-            if len(self.audio_buffer) > 0 and self.chunk_count > 1 and not self.audio_processor.is_buffer_silent(self.audio_buffer):
-                audio_filename = await self.audio_processor.save_audio(bytes(self.audio_buffer), self.client_id)
-                self.audio_buffer = bytearray()
-                self.chunk_count = 0
-                await self.websocket.send(json.dumps({'status': 'recording_saved', 'filename': audio_filename}))
-            else:
-                await self.websocket.send(json.dumps({'status': 'no_audio_recorded'}))
-        elif command.startswith('play_'):
-            audio_filename = command.split('_', 1)[1]
-            await self.stream_audio(audio_filename)
-        else:
-            logger.warning(f"Unknown command: {command}")
+    def trim_silence(self, audio_buffer, sample_width, threshold):
+        start_index = 0
+        end_index = len(audio_buffer)
 
-    async def stream_audio(self, audio_filename):
-        try:
-            audio_data = await self.audio_processor.get_audio(audio_filename)
-            await self.websocket.send(json.dumps({'type': 'audio_stream_start', 'filename': audio_filename}))
-            await self.websocket.send(audio_data)
-            await self.websocket.send(json.dumps({'type': 'audio_stream_end'}))
-        except Exception as e:
-            logger.error(f"Error streaming audio: {e}")
-            await self.websocket.send(json.dumps({'type': 'error', 'message': 'Error streaming audio'}))
+        for i in range(0, len(audio_buffer), sample_width):
+            rms = audioop.rms(audio_buffer[i:i + sample_width], sample_width)
+            if rms >= threshold:
+                start_index = i
+                break
+
+        for i in range(len(audio_buffer) - sample_width, 0, -sample_width):
+            rms = audioop.rms(audio_buffer[i:i + sample_width], sample_width)
+            if rms >= threshold:
+                end_index = i + sample_width
+                break
+
+        trimmed_buffer = audio_buffer[start_index:end_index]
+        logger.debug(f"Trimmed audio buffer from {start_index} to {end_index}")
+        return trimmed_buffer
+
+    async def save_audio(self, audio_buffer, client_id):
+        if not audio_buffer:
+            logger.debug("Audio buffer is empty, nothing to save.")
+            return None
+
+        audio_buffer = self.trim_silence(audio_buffer, 2, Config.SILENCE_THRESHOLD)
+
+        if len(audio_buffer) == 0:
+            logger.info(f"No non-silent audio detected for client: {client_id}")
+            return None
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.file_counter += 1
+        audio_filename = f"audio_{client_id}_{timestamp}_{self.file_counter}.wav"
+        
+        audio_filepath = os.path.join(self.audio_file_folder, audio_filename)
+        with wave.open(audio_filepath, 'wb') as wf:
+            wf.setnchannels(1)  # Mono
+            wf.setsampwidth(2)  # Sample width in bytes (16 bits = 2 bytes)
+            wf.setframerate(44100)  # Frame rate set to 44100 Hz
+            wf.writeframes(audio_buffer)
+        
+        metadata = {
+            'client_id': str(client_id),
+            'timestamp': timestamp
+        }
+        self.s3_client.upload_file(
+            audio_filepath, 
+            self.bucket_name, 
+            audio_filename,
+            ExtraArgs={'Metadata': metadata}
+        )
+        os.remove(audio_filepath)  # Remove local file after upload
+
+        logger.info(f"Saved audio file {audio_filename} for client {client_id}")
+        return audio_filename
+
+    async def stream_saved_audio(self, websocket, audio_filename):
+        audio_filepath = os.path.join(self.audio_file_folder, audio_filename)
+
+        self.s3_client.download_file(self.bucket_name, audio_filename, audio_filepath)
+        
+        with open(audio_filepath, 'rb') as f:
+            data = f.read()
+            await websocket.send(data)
+        os.remove(audio_filepath)  # Remove local file after sending
+        logger.info(f"Audio file sent to client and deleted locally: {audio_filepath}")
