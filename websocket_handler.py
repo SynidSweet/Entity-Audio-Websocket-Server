@@ -37,17 +37,13 @@ class WebSocketHandler:
         logger.info(f"Client disconnected: {self.client_id}")
         try:
             if len(self.audio_buffer) > 0:
-                logger.debug(f"Saving audio buffer on disconnect. Buffer length: {len(self.audio_buffer)}")
                 audio_filename = await self.audio_processor.save_audio(bytes(self.audio_buffer), self.client_id)
                 logger.info(f"Audio saved on disconnect: {audio_filename}")
-            else:
-                logger.debug("Audio buffer is empty on disconnect, nothing to save.")
             table.delete_item(Key={'user_id': self.client_id})
         except ClientError as e:
             logger.error(f"Error updating DynamoDB on disconnect: {e}")
 
     async def handle(self):
-        logger.info(f"Handling client: {self.client_id}")
         try:
             async for message in self.websocket:
                 await self.process_message(message)
@@ -55,12 +51,9 @@ class WebSocketHandler:
             logger.info(f"Connection closed for client: {self.client_id}")
 
     async def process_message(self, message):
-        logger.info(f"Received message of type: {type(message)}")
         if isinstance(message, bytes):
-            logger.info(f"Received audio data of length: {len(message)}")
             await self.handle_audio(message)
         elif isinstance(message, str):
-            # Treat the message as a JSON string
             try:
                 data = json.loads(message)
                 if data['type'] == 'audio':
@@ -79,7 +72,6 @@ class WebSocketHandler:
             logger.error("Received message of unknown type")
 
     async def handle_audio(self, audio_data):
-        logger.debug(f"Received audio data. Length: {len(audio_data)}")
         self.audio_buffer.extend(audio_data)
         self.chunk_count += 1
 
