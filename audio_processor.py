@@ -81,7 +81,7 @@ class AudioProcessor:
         with wave.open(audio_filepath, 'wb') as wf:
             wf.setnchannels(1)  # Mono
             wf.setsampwidth(2)  # Sample width in bytes
-            wf.setframerate(44100)  # Frame rate
+            wf.setframerate(44100)  # Frame rate set to 44100 Hz
             wf.writeframes(audio_buffer)
         
         metadata = {
