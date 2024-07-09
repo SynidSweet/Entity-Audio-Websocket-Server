@@ -46,16 +46,27 @@ class WebSocketHandler:
             logger.info(f"Connection closed for client: {self.client_id}")
 
     async def process_message(self, message):
-        try:
-            data = json.loads(message)
-            if data['type'] == 'audio':
-                await self.handle_audio(data['audio'])
-            elif data['type'] == 'command':
-                await self.handle_command(data['command'])
-            else:
-                logger.warning(f"Unknown message type: {data['type']}")
-        except json.JSONDecodeError:
-            logger.error("Received invalid JSON")
+        if isinstance(message, bytes):
+            # Treat the message as audio data
+            await self.handle_audio(message)
+        elif isinstance(message, str):
+            # Treat the message as a JSON string
+            try:
+                data = json.loads(message)
+                if data['type'] == 'audio':
+                    await self.handle_audio(data['audio'])
+                elif data['type'] == 'command':
+                    await self.handle_command(data['command'])
+                else:
+                    logger.warning(f"Unknown message type: {data['type']}")
+            except json.JSONDecodeError:
+                logger.error("Received invalid JSON")
+            except UnicodeDecodeError:
+                logger.error("Received message with invalid UTF-8 encoding")
+            except Exception as e:
+                logger.error(f"Unexpected error: {e}")
+        else:
+            logger.error("Received message of unknown type")
 
     async def handle_audio(self, audio_data):
         self.audio_buffer.extend(audio_data)
