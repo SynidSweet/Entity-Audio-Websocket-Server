@@ -23,7 +23,7 @@ class AudioProcessor:
     def process_audio(self, audio_chunk):
         rms = audioop.rms(audio_chunk, 2)
         logger.debug(f"Processing audio chunk, RMS: {rms}, Threshold: {Config.SILENCE_THRESHOLD}")
-        
+
         if rms >= Config.SILENCE_THRESHOLD:
             self.last_non_silent_time = datetime.datetime.now()
             self.silence_start_time = None
@@ -36,6 +36,7 @@ class AudioProcessor:
             logger.debug(f"Elapsed silence time: {elapsed_silence_time} ms, Silence duration: {Config.SILENCE_DURATION} ms")
             if elapsed_silence_time >= Config.SILENCE_DURATION:
                 logger.debug("Detected silence.")
+                self.silence_start_time = None
                 return True  # Silent
             return False  # Not silent yet
 
@@ -83,21 +84,21 @@ class AudioProcessor:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.file_counter += 1
         audio_filename = f"audio_{client_id}_{timestamp}_{self.file_counter}.wav"
-        
+
         audio_filepath = os.path.join(self.audio_file_folder, audio_filename)
         with wave.open(audio_filepath, 'wb') as wf:
             wf.setnchannels(1)  # Mono
             wf.setsampwidth(2)  # Sample width in bytes (16 bits = 2 bytes)
             wf.setframerate(44100)  # Frame rate set to 44100 Hz
             wf.writeframes(audio_buffer)
-        
+
         metadata = {
             'client_id': str(client_id),
             'timestamp': timestamp
         }
         self.s3_client.upload_file(
-            audio_filepath, 
-            self.bucket_name, 
+            audio_filepath,
+            self.bucket_name,
             audio_filename,
             ExtraArgs={'Metadata': metadata}
         )
@@ -110,7 +111,7 @@ class AudioProcessor:
         audio_filepath = os.path.join(self.audio_file_folder, audio_filename)
 
         self.s3_client.download_file(self.bucket_name, audio_filename, audio_filepath)
-        
+
         with open(audio_filepath, 'rb') as f:
             data = f.read()
             await websocket.send(data)
